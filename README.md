@@ -2,7 +2,7 @@
 # Project 1: AI Forecasting for Staffing Demand
 
 ## Live Demo  
-[Click here to launch the AI Forecasting Dashboard](https://ties-disciplines-checkout-essays.trycloudflare.com/)
+[Click here to launch the AI Forecasting Dashboard](https://motorcycle-pursuit-pick-feat.trycloudflare.com/)
 
 _(Note: The link opens a live Streamlit dashboard built in Google Colab using Cloudflare. It may take ~15 seconds to load.)_
 
