@@ -1,6 +1,11 @@
 ![Project Banner](banner.png)
 # Project 1: AI Forecasting for Staffing Demand
 
+## Live Demo  
+[Click here to launch the AI Forecasting Dashboard](https://ties-disciplines-checkout-essays.trycloudflare.com/)
+
+_(Note: The link opens a live Streamlit dashboard built in Google Colab using Cloudflare. It may take ~15 seconds to load.)_
+
 Goal: Build an AI based forecasting model to predict contact volume and convert forecasts into staffing requirements for workforce planning teams.
 
 ## Business problem
