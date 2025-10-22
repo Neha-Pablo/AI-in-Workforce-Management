@@ -1,3 +1,4 @@
+![Project Banner](banner.png)
 # Project 1: AI Forecasting for Staffing Demand
 
 Goal: Build an AI based forecasting model to predict contact volume and convert forecasts into staffing requirements for workforce planning teams.
