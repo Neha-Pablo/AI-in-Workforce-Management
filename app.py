@@ -12,11 +12,13 @@ st.caption("Built by Neha Korati | MBA, Operations & Supply Chain | AI in Workfo
 st.markdown("Upload your call volume dataset, generate forecasts, and compute staffing plans interactively.")
 
 # ------------- Robust upload: main uploader + fallback button -------------
-uploaded = st.file_uploader("Upload staffing_forecast.csv", type=["csv"], accept_multiple_files=False)
+uploaded = st.file_uploader("Upload CSV (any schema)", type=["csv"], accept_multiple_files=False)
 use_sample = st.button("Or click to load a sample dataset")
 
+# 1) LOAD DATA (no assumptions yet)
+raw_df = None
+source_note = ""
 if use_sample:
-    # lightweight sample so the app works even if drag and drop has issues
     rng = pd.date_range("2024-01-01 06:00", "2024-04-30 22:00", freq="30min")
     sdf = pd.DataFrame({"timestamp": rng})
     dow = sdf.timestamp.dt.dayofweek
@@ -31,11 +33,84 @@ if use_sample:
     spikes = (np.random.rand(len(sdf)) < 0.002) * np.random.randint(20, 60, len(sdf))
     base = 35
     sdf["volume"] = np.clip(base*dow_factor*intraday*trend + noise + spikes, 0, None).round().astype(int)
-    df = sdf.copy()
+    raw_df = sdf.copy()
+    source_note = "Loaded sample data."
 elif uploaded is not None:
-    df = pd.read_csv(uploaded, parse_dates=["timestamp"])
-else:
-    df = None
+    try:
+        raw_df = pd.read_csv(uploaded)  # don't parse yet; we’ll map columns first
+        source_note = "CSV uploaded."
+    except Exception as e:
+        st.error(f"Could not read CSV: {e}")
+        raw_df = None
+
+if raw_df is None:
+    st.info("Upload a CSV (any column names) or click the Sample button.")
+    st.stop()
+
+st.success(source_note)
+
+# 2) COLUMN MAPPING UI
+st.markdown("### Column mapping")
+cols = list(raw_df.columns)
+
+# simple guesses
+lower = [c.lower() for c in cols]
+guess_ts = None
+for key in ["timestamp", "time", "date", "datetime"]:
+    guess_ts = next((c for c in cols if key in c.lower()), guess_ts)
+guess_vol = next((c for c in cols if any(k in c.lower() for k in ["volume","calls","contacts","count"])), None)
+
+timestamp_col = st.selectbox("Select the Timestamp column", options=cols, index=cols.index(guess_ts) if guess_ts in cols else 0)
+volume_col    = st.selectbox("Select the Volume column", options=cols, index=cols.index(guess_vol) if guess_vol in cols else 0)
+
+# optional date format help
+with st.expander("⏱️ (Optional) Specify date format if parsing fails"):
+    st.markdown("Common examples: `%%Y-%%m-%%d %%H:%%M:%%S`, `%%m/%%d/%%Y %%I:%%M %%p`")
+    date_fmt = st.text_input("Date/time format (leave blank to auto-detect)", value="")
+
+# 3) BUILD STANDARDIZED DF (timestamp, volume) + FRIENDLY ERRORS
+df = raw_df[[timestamp_col, volume_col]].rename(columns={timestamp_col: "timestamp", volume_col: "volume"}).copy()
+
+# parse dates
+try:
+    if date_fmt.strip():
+        df["timestamp"] = pd.to_datetime(df["timestamp"], format=date_fmt, errors="coerce")
+    else:
+        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce", infer_datetime_format=True)
+except Exception as e:
+    st.error(f"Could not parse dates: {e}")
+    st.stop()
+
+# coerce volume to numeric
+df["volume"] = pd.to_numeric(df["volume"], errors="coerce")
+
+# basic validations
+issues = []
+if df["timestamp"].isna().any():
+    n = int(df["timestamp"].isna().sum())
+    issues.append(f"{n} rows have invalid timestamps.")
+if df["volume"].isna().any():
+    n = int(df["volume"].isna().sum())
+    issues.append(f"{n} rows have non-numeric or missing volume.")
+if (df["volume"] < 0).any():
+    n = int((df["volume"] < 0).sum())
+    issues.append(f"{n} rows have negative volume (not allowed).")
+# drop bad rows for now
+df = df.dropna(subset=["timestamp","volume"])
+df = df[df["volume"] >= 0]
+
+if len(issues) > 0:
+    st.warning("Data checks:\n- " + "\n- ".join(issues))
+
+if df.empty:
+    st.error("After cleaning, no usable rows remain. Please adjust column mapping or date format.")
+    st.stop()
+
+# sort & preview
+df = df.sort_values("timestamp").reset_index(drop=True)
+st.dataframe(df.head(10), use_container_width=True)
+st.caption("Mapped preview (first 10 rows). Columns standardized to `timestamp` and `volume`.")
+
 
 if df is None:
     st.info("Upload a CSV with columns 'timestamp' and 'volume' or click the sample button.")
