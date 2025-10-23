@@ -248,6 +248,61 @@ st.sidebar.write(f"Improvement: {improvement:.2f}%")
 
 choice = st.radio("Select Forecast Type", ["Baseline", "AI Model"], horizontal=True)
 forecast_col = "forecast_baseline" if choice == "Baseline" else "forecast_rf"
+# ===================== ACCURACY PANEL =====================
+st.markdown("### Accuracy panel")
+
+def build_accuracy_panel(df_in, pred_col, label):
+    dfp = df_in[["timestamp", "volume", pred_col]].dropna().copy()
+    if dfp.empty:
+        st.info(f"No comparable rows to evaluate for **{label}**.")
+        return
+
+    dfp["error"] = dfp[pred_col] - dfp["volume"]         # + = over-forecast, - = under-forecast
+    dfp["abs_error"] = (dfp["error"]).abs()
+
+    # Top 5 under / over forecast intervals
+    under = dfp.nsmallest(5, "error")[["timestamp", "volume", pred_col, "error"]]
+    over  = dfp.nlargest(5, "error")[["timestamp", "volume", pred_col, "error"]]
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.caption(f"**{label}: Biggest UNDER-forecast (model predicted too low)**")
+        st.dataframe(under.rename(columns={
+            "volume":"actual",
+            pred_col:"forecast",
+            "error":"forecast - actual"
+        }), use_container_width=True)
+    with c2:
+        st.caption(f"**{label}: Biggest OVER-forecast (model predicted too high)**")
+        st.dataframe(over.rename(columns={
+            "volume":"actual",
+            pred_col:"forecast",
+            "error":"forecast - actual"
+        }), use_container_width=True)
+
+    # Simple auto-takeaway by hour-of-day
+    tmp = dfp.copy()
+    tmp["hour"] = pd.to_datetime(tmp["timestamp"]).dt.hour
+    by_hour = tmp.groupby("hour")["error"].mean().sort_values()
+    if not by_hour.empty:
+        worst_under_hour = int(by_hour.index[0])
+        worst_over_hour  = int(by_hour.index[-1])
+        st.info(
+            f"**Takeaway ({label})** — Avg error by hour suggests the model tends to "
+            f"**under-forecast** around **{worst_under_hour:02d}:00** and "
+            f"**over-forecast** around **{worst_over_hour:02d}:00**. "
+            "Consider adding features (events/marketing/seasonality) for those windows."
+        )
+
+# Always show baseline panel
+build_accuracy_panel(test, "forecast_baseline", "Baseline")
+
+# Show AI panel only if we produced predictions
+if "forecast_rf" in test.columns and test["forecast_rf"].notna().any():
+    build_accuracy_panel(test, "forecast_rf", "AI model")
+else:
+    st.caption("AI model panel skipped (no valid predictions for selected dataset).")
+# ==========================================================
 
 # ------------- Staffing function -------------
 def staffing_from_volume(vol, aht_seconds, interval_minutes=30, occupancy=0.85, shrinkage=0.3):
