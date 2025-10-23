@@ -236,16 +236,6 @@ else:
     st.sidebar.subheader("Model Performance")
     st.sidebar.write("Baseline: not enough data to compute.")
 
-
-mae_base = mean_absolute_error(test["volume"], test["forecast_baseline"])
-mae_rf = mean_absolute_error(test["volume"], test["forecast_rf"])
-improvement = (1 - mae_rf/mae_base) * 100
-
-st.sidebar.subheader("Model Performance")
-st.sidebar.write(f"Baseline MAE: {mae_base:.2f}")
-st.sidebar.write(f"AI Model MAE: {mae_rf:.2f}")
-st.sidebar.write(f"Improvement: {improvement:.2f}%")
-
 choice = st.radio("Select Forecast Type", ["Baseline", "AI Model"], horizontal=True)
 forecast_col = "forecast_baseline" if choice == "Baseline" else "forecast_rf"
 # ===================== ACCURACY PANEL =====================
