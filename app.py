@@ -110,6 +110,13 @@ if df.empty:
 df = df.sort_values("timestamp").reset_index(drop=True)
 st.dataframe(df.head(10), use_container_width=True)
 st.caption("Mapped preview (first 10 rows). Columns standardized to `timestamp` and `volume`.")
+# --- ALWAYS define model parameters early so they're in scope ---
+st.sidebar.header("Model Parameters")
+aht = st.sidebar.number_input(
+    "Average Handle Time (seconds)", min_value=60, max_value=900, value=300, step=10
+)
+occupancy = st.sidebar.slider("Occupancy", 0.50, 0.95, 0.85, 0.01)
+shrinkage = st.sidebar.slider("Shrinkage", 0.00, 0.50, 0.30, 0.01)
 
 
 if df is None:
