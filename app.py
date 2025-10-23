@@ -116,32 +116,119 @@ if df is None:
     st.info("Upload a CSV with columns 'timestamp' and 'volume' or click the sample button.")
     st.stop()
 
-# ------------- Prep and features -------------
+# ------------- Prep and features (robust) -------------
 df = df.sort_values("timestamp").reset_index(drop=True)
+
+# Ensure volume is numeric and non-negative
+df["volume"] = pd.to_numeric(df["volume"], errors="coerce")
+df = df.dropna(subset=["timestamp", "volume"])
+df = df[df["volume"] >= 0]
+
+# Basic calendar features
 df["hour"] = df["timestamp"].dt.hour
 df["dayofweek"] = df["timestamp"].dt.dayofweek
 df["is_weekend"] = (df["dayofweek"] >= 5).astype(int)
-df["lag_1day"] = df["volume"].shift(48)
-df["lag_1week"] = df["volume"].shift(48*7)
+
+# Decide which lags we can safely create
+H_PER_DAY = 48  # 30-min intervals
+have_week = len(df) >= (H_PER_DAY * 7 + 50)  # need ~1 week + buffer for test
+df["lag_1day"] = df["volume"].shift(H_PER_DAY)
+if have_week:
+    df["lag_1week"] = df["volume"].shift(H_PER_DAY * 7)
+
+# Drop rows with NaNs from lags
 work = df.dropna().reset_index(drop=True)
 
-# Sidebar controls
-st.sidebar.header("Model Parameters")
-aht = st.sidebar.number_input("Average Handle Time (seconds)", 60, 900, 300, 10)
-occupancy = st.sidebar.slider("Occupancy", 0.5, 0.95, 0.85, 0.01)
-shrinkage = st.sidebar.slider("Shrinkage", 0.0, 0.5, 0.30, 0.01)
+# If still too small, explain and stop early
+if len(work) < 200:
+    st.warning(
+        "Not enough clean history to train an ML model (need at least a few hundred rows after lagging). "
+        "Showing baseline charts only."
+    )
 
-# ------------- Train test split -------------
-split_idx = int(len(work)*0.8)
-train, test = work.iloc[:split_idx], work.iloc[split_idx:]
+# Sidebar controls (unchanged variables assumed to exist: aht, occupancy, shrinkage set earlier)
+# ------------- Train/test split by time -------------
+if len(work) >= 200:
+    split_idx = int(len(work) * 0.8)
+    train, test = work.iloc[:split_idx], work.iloc[split_idx:]
+else:
+    # Fall back: use the cleaned df for baseline-only view
+    split_idx = int(len(df) * 0.8)
+    train, test = df.iloc[:split_idx], df.iloc[split_idx:]
 
-# ------------- Baseline and AI forecasts -------------
-test["forecast_baseline"] = test["lag_1week"]
+# ------------- Baseline forecast -------------
+if have_week and "lag_1week" in test.columns:
+    test["forecast_baseline"] = test["lag_1week"]
+else:
+    # fallback baseline: last 1-day same interval if week is unavailable
+    if "lag_1day" in test.columns:
+        test["forecast_baseline"] = test["lag_1day"]
+    else:
+        # final fallback: moving average of last 6 intervals
+        df["ma6"] = df["volume"].rolling(6).mean()
+        tmp = df.dropna().reset_index(drop=True)
+        split_idx_tmp = int(len(tmp) * 0.8)
+        train, test = tmp.iloc[:split_idx_tmp], tmp.iloc[split_idx_tmp:]
+        test["forecast_baseline"] = test["ma6"]
 
-features = ["hour", "dayofweek", "is_weekend", "lag_1day", "lag_1week"]
-rf = RandomForestRegressor(n_estimators=200, random_state=42)
-rf.fit(train[features], train["volume"])
-test["forecast_rf"] = rf.predict(test[features])
+# ------------- AI forecast (guarded) -------------
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_absolute_error
+
+rf_available = False
+try:
+    if len(work) >= 200:
+        # Choose features based on what exists
+        base_feats = ["hour", "dayofweek", "is_weekend", "lag_1day"]
+        if have_week and "lag_1week" in work.columns:
+            features = base_feats + ["lag_1week"]
+        else:
+            features = base_feats
+
+        # Make sure there are no NaNs or infs in features
+        X_train = train[features].replace([np.inf, -np.inf], np.nan).dropna()
+        y_train = train.loc[X_train.index, "volume"]
+        X_test = test[features].replace([np.inf, -np.inf], np.nan).dropna()
+        y_test = test.loc[X_test.index, "volume"]
+
+        # If cleaning dropped too many rows, skip ML gracefully
+        if len(X_train) > 100 and len(X_test) > 20:
+            rf = RandomForestRegressor(n_estimators=200, random_state=42)
+            rf.fit(X_train, y_train)
+            test.loc[X_test.index, "forecast_rf"] = rf.predict(X_test)
+            rf_available = True
+except Exception as e:
+    st.warning(f"AI model skipped due to data/format limits: {e}")
+
+# ------------- Metrics (guarded) -------------
+from sklearn.metrics import mean_absolute_error
+mae_base = None
+mae_rf = None
+improvement = None
+
+# Align for metric calculation
+mask_base = test["forecast_baseline"].notna()
+if mask_base.any():
+    mae_base = mean_absolute_error(test.loc[mask_base, "volume"], test.loc[mask_base, "forecast_baseline"])
+
+if rf_available and "forecast_rf" in test.columns:
+    mask_rf = test["forecast_rf"].notna()
+    if mask_rf.any():
+        mae_rf = mean_absolute_error(test.loc[mask_rf, "volume"], test.loc[mask_rf, "forecast_rf"])
+
+if mae_base is not None:
+    st.sidebar.subheader("Model Performance")
+    st.sidebar.write(f"Baseline MAE: {mae_base:.2f}")
+    if mae_rf is not None:
+        st.sidebar.write(f"AI Model MAE: {mae_rf:.2f}")
+        improvement = (1 - mae_rf / mae_base) * 100
+        st.sidebar.write(f"Improvement: {improvement:.2f}%")
+    else:
+        st.sidebar.write("AI Model: skipped (not enough clean data).")
+else:
+    st.sidebar.subheader("Model Performance")
+    st.sidebar.write("Baseline: not enough data to compute.")
+
 
 mae_base = mean_absolute_error(test["volume"], test["forecast_baseline"])
 mae_rf = mean_absolute_error(test["volume"], test["forecast_rf"])
